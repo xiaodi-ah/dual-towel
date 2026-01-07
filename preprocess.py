@@ -35,7 +35,7 @@ from data import PCAPProcessor, TRAFFIC_FEATURE_DIM
 
 def process_pcap_directory(pcap_dir, output_path, max_packets=100, 
                            payload_packets=5, payload_len=128,
-                           samples_per_class=None, train_ratio=0.8):
+                           samples_per_class=None, train_ratio=0.8, valid_ratio=0.1, test_ratio=0.1):
     """
     处理按类别组织的 PCAP 目录
     
@@ -114,25 +114,32 @@ def process_pcap_directory(pcap_dir, output_path, max_packets=100,
     
     print(f"\n总共 {len(all_samples)} 个样本")
     
-    # 划分训练集和验证集
+    # 划分训练集、验证集、测试集 (80/10/10)
     import random
     random.shuffle(all_samples)
     
-    split_idx = int(len(all_samples) * train_ratio)
-    train_samples = all_samples[:split_idx]
-    valid_samples = all_samples[split_idx:]
+    n_total = len(all_samples)
+    n_train = int(n_total * train_ratio)
+    n_valid = int(n_total * valid_ratio)
+    
+    train_samples = all_samples[:n_train]
+    valid_samples = all_samples[n_train:n_train + n_valid]
+    test_samples = all_samples[n_train + n_valid:]
     
     # 保存
     base_name = os.path.splitext(output_path)[0]
     train_path = f"{base_name}_train.tsv"
     valid_path = f"{base_name}_valid.tsv"
+    test_path = f"{base_name}_test.tsv"
     
     save_tsv(train_samples, train_path)
     save_tsv(valid_samples, valid_path)
+    save_tsv(test_samples, test_path)
     
     print(f"\n保存完成:")
     print(f"  训练集: {train_path} ({len(train_samples)} 样本)")
-    print(f"  验证集: {valid_path} ({len(valid_samples)} 样本)")
+    print(f"  验证集: {valid_path} ({len(valid_samples)} 样本) - 用于模型选择")
+    print(f"  测试集: {test_path} ({len(test_samples)} 样本) - 用于最终评估")
     
     # 保存标签映射
     labels_path = f"{base_name}_labels.json"
@@ -185,6 +192,10 @@ def main():
                         help="每类最多采样多少个 PCAP 文件 (默认全部)")
     parser.add_argument("--train_ratio", type=float, default=0.8,
                         help="训练集比例 (默认 0.8)")
+    parser.add_argument("--valid_ratio", type=float, default=0.1,
+                        help="验证集比例 (默认 0.1, 用于模型选择)")
+    parser.add_argument("--test_ratio", type=float, default=0.1,
+                        help="测试集比例 (默认 0.1, 用于最终评估)")
     
     args = parser.parse_args()
     
@@ -195,7 +206,9 @@ def main():
         payload_packets=args.payload_packets,
         payload_len=args.payload_len,
         samples_per_class=args.samples_per_class,
-        train_ratio=args.train_ratio
+        train_ratio=args.train_ratio,
+        valid_ratio=args.valid_ratio,
+        test_ratio=args.test_ratio
     )
 
 
