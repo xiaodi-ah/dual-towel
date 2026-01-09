@@ -216,6 +216,27 @@ def main():
     if args.pretrained:
         print(f"Loading pretrained: {args.pretrained}")
         state = torch.load(args.pretrained, map_location=device)
+        
+        # 处理 position embedding 尺寸不匹配
+        pos_key = 'embedding.position_embedding.weight'
+        if pos_key in state and state[pos_key].shape[0] != args.max_sem_len:
+            print(f"  Truncating position embedding: {state[pos_key].shape[0]} -> {args.max_sem_len}")
+            state[pos_key] = state[pos_key][:args.max_sem_len, :]
+        
+        # 诊断：检查权重匹配情况
+        model_keys = set(model.state_dict().keys())
+        pretrain_keys = set(state.keys())
+        matched = model_keys & pretrain_keys
+        missing = model_keys - pretrain_keys
+        unexpected = pretrain_keys - model_keys
+        print(f"  Matched keys: {len(matched)}")
+        print(f"  Missing in pretrained: {len(missing)}")
+        print(f"  Unexpected in pretrained: {len(unexpected)}")
+        if len(matched) < 10:
+            print("  WARNING: Very few weights matched! Check model structure.")
+            print(f"  Model keys sample: {list(model_keys)[:5]}")
+            print(f"  Pretrain keys sample: {list(pretrain_keys)[:5]}")
+        
         model.load_state_dict(state, strict=False)
         print("Pretrained weights loaded (semantic tower)")
     
@@ -232,6 +253,17 @@ def main():
         
         # 只优化非冻结参数
         trainable = [p for p in model.parameters() if p.requires_grad]
+        print(f"  Trainable params: {sum(p.numel() for p in trainable):,}")
+        print(f"  Frozen params: {sum(p.numel() for p in model.parameters() if not p.requires_grad):,}")
+        
+        # 调试：检查哪些模块可训练
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                print(f"    [TRAIN] {name}: {param.shape}")
+                if len([n for n,p in model.named_parameters() if p.requires_grad]) > 10:
+                    print("    ... (truncated)")
+                    break
+        
         opt1 = torch.optim.AdamW(trainable, lr=args.stage1_lr)
         
         for ep in range(args.stage1_epochs):
