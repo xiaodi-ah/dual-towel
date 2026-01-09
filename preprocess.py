@@ -54,12 +54,15 @@ def process_pcap_directory(pcap_dir, output_path, max_packets=100,
         payload_len=payload_len
     )
     
-    # 收集所有类别
+    # 收集所有类别 (过滤隐藏目录和系统目录)
     label_dirs = {}
+    skip_dirs = {'.ipynb_checkpoints', '__pycache__', '.git', '.DS_Store'}
     for i, name in enumerate(sorted(os.listdir(pcap_dir))):
+        if name.startswith('.') or name in skip_dirs:
+            continue  # 跳过隐藏目录和系统目录
         dir_path = os.path.join(pcap_dir, name)
         if os.path.isdir(dir_path):
-            label_dirs[i] = (name, dir_path)
+            label_dirs[len(label_dirs)] = (name, dir_path)
     
     print(f"发现 {len(label_dirs)} 个类别:")
     for label_id, (name, path) in label_dirs.items():
