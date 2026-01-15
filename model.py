@@ -284,10 +284,12 @@ class DualTowerETBERT(nn.Module):
         fusion: 'attention' (门控融合) 或 'concat' (简单拼接)
         labels_num: 分类数
         seq_len: 流量时序矩阵长度 (前 N 个包)
+        ablation: 消融模式 - 'both'(双塔), 'semantic_only'(只语义塔), 'stat_only'(只统计塔)
     """
     
     def __init__(self, args, semantic_embedding, semantic_encoder, 
-                 fusion='attention', labels_num=10, seq_len=DEFAULT_SEQ_LEN):
+                 fusion='attention', labels_num=10, seq_len=DEFAULT_SEQ_LEN,
+                 ablation='both'):
         super().__init__()
         
         # 使用与原始 ET-BERT 相同的属性名，以便正确加载预训练权重
@@ -297,33 +299,37 @@ class DualTowerETBERT(nn.Module):
         hidden = args.hidden_size
         dropout = getattr(args, 'dropout', 0.1)
         self.seq_len = seq_len
+        self.ablation = ablation  # 'both', 'semantic_only', 'stat_only'
         
         # ====== 统计塔: 流量时序矩阵编码器 (1D-CNN + LSTM) ======
-        self.traffic_encoder = TrafficImageEncoder(
-            hidden_size=hidden,
-            feature_dim=TRAFFIC_FEATURE_DIM,
-            cnn_filters=64,
-            kernel_sizes=[3, 5, 7, 9],
-            lstm_layers=2,
-            dropout=dropout
-        )
+        if ablation != 'semantic_only':
+            self.traffic_encoder = TrafficImageEncoder(
+                hidden_size=hidden,
+                feature_dim=TRAFFIC_FEATURE_DIM,
+                cnn_filters=64,
+                kernel_sizes=[3, 5, 7, 9],
+                lstm_layers=2,
+                dropout=dropout
+            )
+            self.stat_pooling = TrafficImagePooling(hidden, pooling='attention')
         
         # ====== 池化层 (各自独立) ======
-        self.sem_pooling = TrafficImagePooling(hidden, pooling='attention')
-        self.stat_pooling = TrafficImagePooling(hidden, pooling='attention')
+        if ablation != 'stat_only':
+            self.sem_pooling = TrafficImagePooling(hidden, pooling='attention')
         
         # ====== 融合模块 (向量级别) ======
-        if fusion == 'attention':
-            self.fusion = AttentionFusion(hidden, getattr(args, 'heads_num', 8), dropout, mode='gated')
-            self.fusion_type = 'attention'
-        else:
-            self.fusion = nn.Sequential(
-                nn.Linear(hidden * 2, hidden), 
-                nn.LayerNorm(hidden),
-                nn.ReLU(), 
-                nn.Dropout(dropout)
-            )
-            self.fusion_type = 'concat'
+        self.fusion_type = fusion
+        if ablation == 'both':
+            # 双塔模式需要融合
+            if fusion == 'attention':
+                self.fusion = AttentionFusion(hidden, getattr(args, 'heads_num', 8), dropout, mode='gated')
+            else:
+                self.fusion = nn.Sequential(
+                    nn.Linear(hidden * 2, hidden), 
+                    nn.LayerNorm(hidden),
+                    nn.ReLU(), 
+                    nn.Dropout(dropout)
+                )
         
         # ====== 分类头 ======
         self.classifier = nn.Sequential(
@@ -350,24 +356,33 @@ class DualTowerETBERT(nn.Module):
         Returns:
             loss, logits
         """
-        # ====== 语义塔 (ET-BERT) ======
-        sem = self.embedding(sem_ids, seg)
-        sem_seq = self.encoder(sem, seg)  # [B, L_sem, hidden]
+        # ====== 消融模式: 只统计塔 ======
+        if self.ablation == 'stat_only':
+            traffic_enc = self.traffic_encoder(traffic_matrix)  # [B, N, hidden]
+            fused = self.stat_pooling(traffic_enc)  # [B, hidden]
         
-        # 语义塔池化
-        sem_pooled = self.sem_pooling(sem_seq)  # [B, hidden]
+        # ====== 消融模式: 只语义塔 ======
+        elif self.ablation == 'semantic_only':
+            sem = self.embedding(sem_ids, seg)
+            sem_seq = self.encoder(sem, seg)  # [B, L_sem, hidden]
+            fused = self.sem_pooling(sem_seq)  # [B, hidden]
         
-        # ====== 统计塔: 流量时序矩阵编码 ======
-        traffic_enc = self.traffic_encoder(traffic_matrix)  # [B, N, hidden]
-        
-        # 统计塔池化 (独立)
-        stat_pooled = self.stat_pooling(traffic_enc)  # [B, hidden]
-        
-        # ====== 融合 (向量级别) ======
-        if self.fusion_type == 'attention':
-            fused = self.fusion(sem_pooled, stat_pooled)  # [B, hidden]
+        # ====== 双塔模式 ======
         else:
-            fused = self.fusion(torch.cat([sem_pooled, stat_pooled], dim=-1))  # [B, hidden]
+            # 语义塔 (ET-BERT)
+            sem = self.embedding(sem_ids, seg)
+            sem_seq = self.encoder(sem, seg)  # [B, L_sem, hidden]
+            sem_pooled = self.sem_pooling(sem_seq)  # [B, hidden]
+            
+            # 统计塔: 流量时序矩阵编码
+            traffic_enc = self.traffic_encoder(traffic_matrix)  # [B, N, hidden]
+            stat_pooled = self.stat_pooling(traffic_enc)  # [B, hidden]
+            
+            # 融合 (向量级别)
+            if self.fusion_type == 'attention':
+                fused = self.fusion(sem_pooled, stat_pooled)  # [B, hidden]
+            else:
+                fused = self.fusion(torch.cat([sem_pooled, stat_pooled], dim=-1))  # [B, hidden]
         
         # ====== 分类 ======
         logits = self.classifier(fused)
