@@ -173,6 +173,8 @@ def main():
     parser.add_argument("--fusion", choices=['attention', 'concat'], default='attention')
     parser.add_argument("--max_pkt_len", type=int, default=100, help="流量时序矩阵长度")
     parser.add_argument("--max_sem_len", type=int, default=128, help="语义序列长度 (需与训练时一致)")
+    parser.add_argument("--ablation", choices=['both', 'semantic_only', 'stat_only'], 
+                        default='both', help="消融模式")
     parser.add_argument("--gpu", type=int, default=0)
     
     args = parser.parse_args()
@@ -215,7 +217,8 @@ def main():
         cfg_obj, sem_emb, sem_enc,
         fusion=args.fusion,
         labels_num=args.labels_num,
-        seq_len=args.max_pkt_len
+        seq_len=args.max_pkt_len,
+        ablation=args.ablation
     ).to(device)
     
     # 加载模型权重
