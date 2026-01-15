@@ -130,8 +130,8 @@ def main():
     parser.add_argument("--fusion", choices=['attention', 'concat'], default='attention')
     
     # 训练参数
-    parser.add_argument("--batch_size", type=int, default=8, help="实际 batch size (建议 4-8 以节省显存)")
-    parser.add_argument("--accum_steps", type=int, default=4, help="梯度累积步数 (有效 batch = batch_size * accum_steps)")
+    parser.add_argument("--batch_size", type=int, default=16, help="实际 batch size")
+    parser.add_argument("--accum_steps", type=int, default=2, help="梯度累积步数 (有效 batch = batch_size * accum_steps)")
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--seed", type=int, default=42)
@@ -142,6 +142,10 @@ def main():
     parser.add_argument("--two_stage", action="store_true", help="启用两阶段训练")
     parser.add_argument("--stage1_epochs", type=int, default=3, help="阶段1 epochs")
     parser.add_argument("--stage1_lr", type=float, default=1e-3, help="阶段1学习率")
+    
+    # 消融实验
+    parser.add_argument("--ablation", choices=['both', 'semantic_only', 'stat_only'], 
+                        default='both', help="消融模式: both=双塔, semantic_only=只语义塔, stat_only=只统计塔")
     
     # 序列长度
     parser.add_argument("--max_sem_len", type=int, default=512)
@@ -209,8 +213,11 @@ def main():
         cfg_obj, sem_emb, sem_enc,
         fusion=args.fusion,
         labels_num=args.labels_num,
-        seq_len=args.max_pkt_len
+        seq_len=args.max_pkt_len,
+        ablation=args.ablation
     ).to(device)
+    
+    print(f"Ablation mode: {args.ablation}")
     
     # 加载预训练权重
     if args.pretrained:
